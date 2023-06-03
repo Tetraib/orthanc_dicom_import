@@ -1,0 +1,10 @@
+[package]
+name = "orthanc_dicom_import"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+walkdir = "2"
+rayon = "1.7"
+reqwest = { version = "0.11", features = ["json"] }
+tokio = { version = "1.28.2", features = ["full"] }
