@@ -8,3 +8,4 @@ walkdir = "2"
 rayon = "1.7"
 reqwest = { version = "0.11", features = ["json"] }
 tokio = { version = "1.28.2", features = ["full"] }
+indicatif = "0.17.4"
