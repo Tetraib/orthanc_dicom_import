@@ -3,7 +3,8 @@ use reqwest::Client;
 use std::env;
 use std::path::PathBuf;
 use tokio::fs::File;
-use tokio::io::AsyncReadExt;
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt;
 use walkdir::{DirEntry, WalkDir};
 use indicatif::{ProgressBar, ProgressStyle};
 
@@ -15,21 +16,23 @@ fn is_dicom(entry: &DirEntry) -> bool {
         .unwrap_or(false)
 }
 
-async fn upload_to_orthanc(file: &PathBuf, orthanc_url: &str) {
+async fn upload_to_orthanc(file: &PathBuf, orthanc_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut buffer = Vec::new();
     File::open(file)
-        .await
-        .unwrap()
+        .await?
         .read_to_end(&mut buffer)
-        .await
-        .unwrap();
+        .await?;
 
     let client = Client::new();
     let res = client.post(orthanc_url).body(buffer).send().await;
 
     match res {
-        Ok(_) => println!("Successfully uploaded: {:?}", file),
-        Err(e) => println!("Failed to upload: {:?}, due to error: {}", file, e),
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let mut file = OpenOptions::new().append(true).open("errors.txt").await?;
+            file.write_all(format!("Failed to upload: {:?}, due to error: {}\n", file, e).as_bytes()).await?;
+            Err(e.into())
+        }
     }
 }
 
@@ -60,14 +63,20 @@ async fn main() {
     );
 
     dicom_files.par_iter().for_each(|file| {
-        // We need to use tokio's block_in_place because we're in a rayon parallel context
+        let file_path = file.path().to_path_buf();
+        let orthanc_url = orthanc_url.clone();
+
+        // We need to use tokio-rayon's spawn_async because we're in a rayon parallel context
         // and we want to do async IO operations.
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(upload_to_orthanc(&file.path().to_path_buf(), orthanc_url));
+        let _ = tokio_rayon::spawn_async(move || {
+            tokio::runtime::Handle::current().block_on(upload_to_orthanc(&file_path, &orthanc_url))
+        }).await.unwrap_or_else(|e| {
+            // Handle the error from spawn_async
+            println!("Failed to upload: {:?}, due to spawn_async error: {:?}", file_path, e);
         });
-        pb.inc(1); // increment the progress bar
+
+        pb.inc(1);
     });
 
-    pb.finish_with_message("All files uploaded.");
+    pb.finish_with_message("All files processed.");
 }
